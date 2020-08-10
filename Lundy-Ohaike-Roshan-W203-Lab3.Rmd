@@ -1,0 +1,655 @@
+---
+title: "Lab-3-Report-Final"
+author: "Eric Lundy, Gabriel Ohaike, Javed Roshan"
+date: "8/2/2020"
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\newpage
+# Chapter 1: Introduction
+
+## 1.1: Overview
+
+According to The Center for Disease Control and Prevention (CDC) “COVID-19 is mostly spread by respiratory droplets released when people talk, cough, or sneeze.” Due to the rapid spread and high mortality rate of COVID-19, the CDC recommends the following guidelines:
+
+
+* Wash your hands often
+* Avoid close contact
+* Cover your mouth and nose with a cloth face cover when around others
+* Cover coughs and sneezes
+* Clean and disinfect
+* Monitor Your Health Daily
+
+
+In the United States, one of the guidelines on the list above “Cover your mouth and nose with a cloth face cover when around others” has been a controversial guideline. Some citizens argue that requiring a mask in public places is an attack on their personal freedom while others believe that simply wearing a mask could save lives. As more businesses are gradually reopening, most state government have mandated that face mask be worn in public places. Yet, there are many who have failed to comply with this directive. This leads us to our research question.
+
+
+## 1.2: Research Question
+
+Does wearing a mask help prevent the spread of COVID-19?
+
+## 1.3: Operationalization
+
+We are operationalizing this definition by assuming that the states who have mandated face mask adoption will impact the spread of the COVID-19. We also assume that a higher number of cases per square mile is a good indicator of the spread of the disease. Therefore, we normalize the total cases by the population density. Following the mandate for employees in public-facing businesses to wear face masks, we would like to consider the wider adoption of this mandate to all residents of a state. Thereby, measuring how masks are actually affecting the spread of the disease.
+
+
+\newpage
+# Chapter 2: Exploratory Data Analysis
+
+## 2.1: Data Sources
+
+The data was compiled by Majid Maki-Nayeri, a professor at UC Berkeley. He extracted many variables from the COVID-19 US state policy database (Raifman J, Nocka K, Jones D, Bor J, Lipson S, Jay J, and Chan P).
+
+The dataset includes variables representing:
+
+* Spread of the disease
+* State-level policy responses
+* General state-level characteristics
+
+
+In order for us to answer the research question, we have added two new variables to the dataset: `Fixed_Mandate_Face_Mask` and `First_Case_Date`. We sourced this data from the CDC website.
+
+
+## 2.2: Data Exploration
+
+Let's examine all data from the dataset provided
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(car)
+library(lmtest)
+library(sandwich)
+library(stringr)
+library(stargazer)
+library(dplyr)
+
+library(ggplot2)
+library(gridExtra)
+library(grid)
+library(lattice)
+library(ggimage)
+```
+
+
+```{r readData, tidy=TRUE}
+dataSet = read.csv("/Users/javed/Documents/UCB/covid-19_dataset.csv")
+ds <- dataSet
+sapply(ds, function(x) paste0(head(x),  collapse = ", "))
+```
+
+There are 27 variables and 52 observations. As seen in the dataset, all `date` variables are treated as character. Therefore, we will have to convert them into a date field so we can perform date arithmetic.
+
+
+```{r}
+summary(ds$Total.Cases)
+table(ds$Mandate.face.mask.use.by.employees.in.public.facing.businesses)
+```
+
+Total Cases is the dependent variable of our analysis. We will apply logarithm function in our model as its mean value is >55k. Logarithmic transformation is a convenient means of transforming a highly skewed variable into a more normalized dataset.
+
+A look at `Mandate.face.mask.use.by.employees.in.public.facing.businesses` shows that it has 10 states where face masks were not mandated. 
+
+
+```{r}
+pop <- ds$Population.2018
+options(scipen=999)
+hist(log(pop), main = "2018 US Population Histogram", xlab = "Population")
+summary(ds$Percent.living.under.the.federal.poverty.line..2018.)
+summary(ds$Percent.at.risk.for.serious.illness.due.to.COVID)
+```
+
+We see relatively on average, the percent of the population at risk for serious illness is 38.15 compared to 12.91% of population living under federal poverty line.
+
+\newpage
+## 2.3: Data Cleansing & Transformation
+
+There are two rows with data for state "Arizona". Upon assessment the data for row #4 looks incorrect, so we decided to remove that row from the dataset.
+
+```{r}
+ds <- ds[-c(4),]
+```
+
+let's examine the two new variables introduced. 
+
+  - `Fixed_Mandate_Face_Mask` provides a date when wearing face mask was mandated by a state
+  - `First_Case_Date` provides COVID-19 first case date in a state
+
+Computing `Fixed_Mandate_Face_Mask` - `First_Case_Date` gives us number of days since the first case identified and until face mask was mandated by a state.
+
+We know that the policies and state characteristics related variables' data was compiled as of 07/02/2020 and Covid-19 related variables' data was compiled as of 07/06/2020. We have assumed that for any `Fixed_Mandate_Face_Mask` date with a value 0, that the mandate was implemented as of 07/03/2020 i.e., a day after the last data update to the current dataset
+
+```{r faceMaskMandate}
+maskStart <- as.Date(ds$Fixed_Mandate_Face_Mask, format="%m/%d/%y")
+firstCase <- as.Date(ds$First_Case_Date, format="%m/%d/%y")
+# the load of date data with 0 gets loaded as NA; find all NA - there are 10 such values
+ndx <- which(is.na(maskStart))
+ndx
+# set all of them to 07/07/20 date
+maskStart[ndx] <- as.Date("07/03/20", format="%m/%d/%y")
+mm <- as.data.frame(maskStart-firstCase)
+mm <- mm$`maskStart - firstCase`
+mm <- strtoi(mm)
+# days until mask was mandated
+summary(mm)
+```
+
+The mask mandated date was enforced in a state after an average of 73 days after the detection of the first instance of COVID-19.
+
+We are also interested in the variable, `Total.Cases`, which signifies total cases of COVID-19 in a state.
+
+```{r transformation}
+# total cases
+tc <- ds$Total.Cases
+title <- "Total Cases Vs Days Until Mask Mandated"
+xtitle <- "Total Cases"
+ytitle <- "Days Until Mask Mandated"
+summary(tc)
+plot(tc, mm, main=title, xlab=xtitle, ylab=ytitle)
+
+# total cases density
+tcd <- tc/ds$Population.density.per.square.miles
+title <- "log(Normalized Total Cases) Vs Days Until Mask Mandated"
+xtitle <- "log(Normalized Total Cases)"
+ytitle <- "Days Until Mask Mandated"
+summary(tcd)
+plot(log(tc), mm, main=title, xlab=xtitle, ylab=ytitle)
+```
+
+We have decided to divide the total number of cases by the `Population.density.per.square.miles`. We believe this should help account for people who live in highly populated states being difficult to observe social distancing. We also are applying the natural log to `Total.Cases` / `Population.density.per.square.miles`. This will help scale the variable since the number of cases is high compared to the days before the mandate.
+
+Let's examine following pairs of attributes:
+
+- Dates when `Closed.non.essential.businesses` and `Began.to.reopen.businesses.statewide`
+- Dates when `Stay.at.home..shelter.in.place` and `End.relax.stay.at.home.shelter.in.place`
+
+```{r modelImprove1}
+# get the reopen and close dates
+reopen <- ds$Began.to.reopen.businesses.statewide
+close <- ds$Closed.non.essential.businesses
+# find the dates that have both dates = 0
+# Knowing very clearly we did not see any dates that have same date for both variables
+ndx1 <- which(reopen == close)
+# let's see how many dates have both dates = 0
+ndx1
+ds$State[ndx1]
+reopen[ndx1]
+close[ndx1]
+```
+
+There is only one row at index 42 (for state South Dakota) that has a zero date in both the `Closed.non.essential.businesses` and `Began.to.reopen.businesses.statewide` variables. It implies that this state did not close non-essential business and therefore, it did not had to reopen business.
+
+Performing a date difference in R with incorrect date will result in a NA value. Let's preserve this index to fix it back to zero later.
+
+```{r zeroDates}
+closeZero <- ds[ds$Closed.non.essential.businesses == 0,]
+closeZero$State
+closeZero$Closed.non.essential.businesses
+closeZero$Began.to.reopen.businesses.statewide
+paste("Total number of states with 0 dates: ", length(closeZero$State))
+which(ds$Closed.non.essential.businesses == 0)
+```
+
+We have already examined the situation with South Dakota above. However, there are 10 additional states that have bad data as they have valid reopen date without a corresponding close date. For these states, we will consider using a `mode` of the number of days.
+
+```{r dateDiff}
+# convert string into a date format for reopen date
+finish <- as.Date(reopen, format="%m/%d/%y")
+# as well when busineeses were closed
+start <- as.Date(close, format="%m/%d/%y")
+# get a date diff to get number of days
+drs <- as.data.frame(finish-start)
+ind1 <- which(is.na(drs))
+print("Indices of this error: ")
+paste(ind1)
+```
+
+It is confirmed that the date difference for the bad data resulted in NA values. 
+
+```{r getMode}
+# function that returns mode given a vector input
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+drs_noNA <- drs[!is.na(drs)]
+drs_noNA = str_remove_all(drs_noNA, "[days ]")
+drs_noNA = strtoi(drs_noNA)
+drsMode <- getmode(drs_noNA)
+drs <- drs$`finish - start`
+drs[is.na(drs)] <- drsMode
+
+drs[ndx1] = 0
+paste("Mode of # of days since reopen for states with valid data: ", getmode(drs_noNA))
+```
+
+We used 39 as a replacement for all 10 states which had bad data.
+
+Let's look at second set of dates: `Stay.at.home..shelter.in.place` and `End.relax.stay.at.home.shelter.in.place`
+
+```{r daysShelterIP}
+shelterEnd <- ds$End.relax.stay.at.home.shelter.in.place
+shelterStart <- ds$Stay.at.home..shelter.in.place
+ndx2 <- which(shelterEnd == shelterStart)
+ds$State[ndx2]
+ds$End.relax.stay.at.home.shelter.in.place[ndx2]
+ds$Stay.at.home..shelter.in.place[ndx2]
+paste("Number of states that did not had shelter in place: ", length(ndx2))
+```
+
+This initial assessment shows that above listed 12 states did not implement Shelter in Place therefore, they did not also relax that government mandate. We will ensure that we will appropriately replace data with 0s for these 12 states.
+
+```{r}
+finishS <- as.Date(shelterEnd, format="%m/%d/%y")
+startS <- as.Date(shelterStart, format="%m/%d/%y")
+dsp <- as.data.frame(finishS - startS)
+dsp <- dsp$`finishS - startS`
+# fix the 12 states with 0 days for the shelter in place
+dsp[ndx2] = 0
+
+t1 <- shelterEnd[which(is.na(dsp))]
+t2 <- shelterStart[which(is.na(dsp))]
+t3 <- ds$State[which(is.na(dsp))]
+
+cat("States that did not end Shelter in Place: ", t3, "\n")
+cat("Shelter start date: ", t2, "\n")
+cat("Shelter end date: ", t1, "\n")
+cat("Indices of these state in dataset: ", which(is.na(dsp)), "\n")
+```
+
+These 4 states did not end Shelter in Place order. `07/02/20` is the last day when the Covid-19 state policy data was pulled. We go with the assumption that Shelter in Place in these 4 states ended on `07/03/20` i.e., a day later the data was updated.
+
+```{r}
+# get the 4 indexes updated
+endDate <- rep(as.Date("07/03/20", format="%m/%d/%y"), each = 4)
+stDate <- c(startS[5], startS[12], startS[32], startS[33])
+replDate <- as.data.frame(endDate - stDate)
+replDate <- replDate$`endDate - stDate`
+replDate <- strtoi(replDate)
+dsp[5] <- replDate[1]
+dsp[12] <- replDate[2]
+dsp[32] <- replDate[3]
+dsp[33] <- replDate[4]
+# convert string into integers
+dsp <- strtoi(dsp)
+# check if there are any NA left
+paste("Are there any NAs?: ", shelterEnd[which(is.na(dsp))])
+paste("Number of days since Shelter in Place lifted")
+dsp
+```
+
+
+Let us also examine the following variables:
+
+- `Percent.living.under.the.federal.poverty.line..2018`
+- `Percent.at.risk.for.serious.illness.due.to.COVID`
+- `Population.2018`
+
+We can get the people living under poverty line by multiplying the population with the percent living under poverty line. Similar is the case for the people at risk for serious illness.
+
+```{r model2Oper, message=FALSE, warning=FALSE}
+pdp <- ds$Population.2018 * ds$Percent.living.under.the.federal.poverty.line..2018.
+prs <- ds$Population.2018 * ds$Percent.at.risk.for.serious.illness.due.to.COVID
+summary(ds$Percent.living.under.the.federal.poverty.line..2018.)
+summary(ds$Percent.at.risk.for.serious.illness.due.to.COVID)
+summary(ds$Population.2018)
+ds$Percent.at.risk.for.serious.illness.due.to.COVID
+ds$Percent.living.under.the.federal.poverty.line..2018.
+ds$Population.2018
+```
+
+There does not seem to be any data anomalies for the 3 variables considered for this model improvement #2.
+
+\newpage
+# Chapter 3: Model Building Process
+
+
+## 3.1: Model 1
+
+The Basic Model is: 
+
+$log(Normalized Total Cases) = \beta_0 + \beta_1 . DaysUntilMaskMandated + u$
+
+
+```{r basicModel, message=FALSE, warning=FALSE}
+#model original
+model1 <- lm(log(tcd) ~ mm, data = ds)
+
+plot1 <- as.ggplot(~plot(model1, which = 1))
+plot2 <- as.ggplot(~plot(model1, which = 2))
+plot3 <- as.ggplot(~plot(model1, which = 3))
+plot4 <- as.ggplot(~plot(model1, which = 5))
+
+grid.arrange(plot1, plot2, layout_matrix = rbind(c(1,1,2,2),c(1,1,2,2)))
+grid.arrange(plot3, plot4, layout_matrix = rbind(c(1,1,2,2),c(1,1,2,2)))
+
+hist(model1$residuals)
+```
+
+`mm` is the masked mandated date - first case of COVID-19 date
+
+### 3.1.1: CLM Assumptions
+
+Let us examine the following 6 six CLM Assumptions for the basic model based on the above plots:
+
+**1. Linear in Parameters**
+
+We will assume that all models are linear in their parameters as we do not have a way to verify them. 
+
+
+**2. Random Sampling**
+
+Random Sampling means that the data we obtain are independent and identically distributed (iid) draws from the population distribution. For this specific lab, we know the data is primarily consensus based and we will proceed with our analysis. 
+
+
+**3. No Perfect Collinearity**
+
+The only independent variable used in this model is days until mask mandated. Since there are no other independent variables involved, we can claim that this assumption has been met
+
+**4. Zero conditional Mean**
+
+From the Residuals Vs Fitted plot, we can see that Zero Conditional Mean assumption is violated. We can infer that the omitted variables potentially influencing this violation and we will further discuss in the next 2 improvements of this basic model.
+
+**5. Homoskedasticity**
+
+Looking at the scale-location plot, the homoskedasticity assumption does not hold. So, we use the Heteroskedasticity-consistent estimation of the covariance matrix of the coefficient estimates in regression models.
+
+**6. Normality**
+
+This basic model confirms to the normality principle as we have observed in the Normal Q-Q plot. There is a slight variation for the data points in the extreme ends of the line. But, given the sample size is >30 (we have 51 data points), we can invoke OLS Asymptotics and Central Limit Theorem and claim normality.
+
+
+### 3.1.2: Regression Table
+
+
+```{r modelStar}
+# run the coeftest
+coeftest(model1, vcov = vcovHC)
+# get the Heteroskedastic Consistent variance-covariance vector
+se_model <- sqrt(diag(vcovHC(model1))) 
+# stargazer output
+stargazer(model1, type = "text", omit.stat = "f",
+          se = se_model, #Using the robust standard error
+          report=('vc*p'),
+          title = "Basic Model: Assess mask mandate impact",
+          star.cutoffs = c(0.05, 0.01, 0.001))
+```
+
+
+### 3.1.3: Statistical Significance
+
+Based on the coeftest results, `mm` is statistically significant with a p-value less than 0.05.
+
+
+### 3.1.4: Practical Significance
+
+Based on the coef test, `mask mandate` is statistically significant. Based on $\beta_1$ value, we can also conclude that for everyday delay in mask mandate, there is a 1.6% increase in the normalized COVID-19 cases. From the Residuals Vs Leverage plot, we can see that data points that have leverage however, they do not significantly impact residuals.
+
+
+## 3.2: Model 2
+
+Let us further enhance the regression model as:
+
+$log(Normalized Total Cases) = \beta_0 + \beta_1 . DaysUntilMaskMandated + \beta_2 . DaysUntilBusinessesReopened + \beta_3 . DaysUntilShelterInPlace + \beta_4 . DaysUntilMaskMandated * DaysUntilBusinessesReopened + \beta_5 . DaysUntilBusinessesReopened * DaysUntilShelterInPlace + \beta_6 . DaysUntilMaskMandated * DaysUntilBusinessesReopened * DaysUntilShelterInPlace + u$
+
+```{r model2, message=FALSE, warning=FALSE}
+#model2 <- lm(log(tcd) ~ mm + drs + dsp + mm * drs + mm * dsp + drs * dsp)
+model2 <- lm(log(tcd) ~ mm + drs + dsp + mm * drs + mm * dsp + mm * drs * dsp)
+
+plot1 <- as.ggplot(~plot(model2, which = 1))
+plot2 <- as.ggplot(~plot(model2, which = 2))
+plot3 <- as.ggplot(~plot(model2, which = 3))
+plot4 <- as.ggplot(~plot(model2, which = 5))
+
+grid.arrange(plot1, plot2, layout_matrix = rbind(c(1,1,2,2),c(1,1,2,2)))
+grid.arrange(plot3, plot4, layout_matrix = rbind(c(1,1,2,2),c(1,1,2,2)))
+
+hist(model2$residuals)
+```
+
+`drs` is the businesses reopen date - businesses closed date
+`dsp` is the shelter in place end date - shelter in place start date
+
+### 3.2.1: CLM Assumptions
+
+In this enhanced model, there is no change in the assumptions related to Linear in Parameters, Random Sampling, Normality and hence we do not cover them here. Let us examine the other 3 assumptions: 
+
+
+**3. No Perfect Collinearity**
+
+The 3 variables involved in the model are: `DaysUntilMaskMandated`, `DaysUntilBusinessesReopened`, & `DaysUntilShelterInPlace`. Let’s examine the correlation among these variables.
+
+```{r model2CLM}
+c1 <- as.numeric(mm)
+c2 <- as.numeric(drs)
+c3 <- as.numeric(dsp)
+cols <- data.frame(mask_mandate = c1, business_reopen = c2, shelter_inplace = c3)
+corrMatrix <- cor(cols)
+corrMatrix
+```
+
+Based on the above, we see that the correlation among all three variables vary in the range -0.36 to 0.38. We can conclude that there is no perfect collinearity among the involved variables of the model.
+
+**4. Zero conditional Mean**
+
+From the Residuals Vs Fitted plot, we can see that Zero Conditional Mean assumption is violated. We can infer that the omitted variables potentially influencing this violation and we will further discuss in the next improvement of this improved model.
+
+**5. Homoskedasticity**
+
+Looking at the scale-location plot, the homoskedasticity assumption does not hold. So, we use the Heteroskedasticity-consistent estimation of the covariance matrix of the coefficient estimates in regression models.
+
+
+### 3.2.2: Regression Table
+
+
+```{r model2Star}
+# run the coeftest
+coeftest(model2, vcov = vcovHC)
+# get the Heteroskedastic Consistent variance-covariance vector
+se_model <- sqrt(diag(vcovHC(model2))) 
+# stargazer output
+stargazer(model2, type = "text", omit.stat = "f",
+          se = se_model, #Using the robust standard error
+          report=('vc*p'),
+          title = "Improved Model#1: Assess mask mandate impact",
+          star.cutoffs = c(0.05, 0.01, 0.001))
+```
+
+
+### 3.2.3: Statistical Significance
+
+Based on the coeftest results, the following variables are statistically significant with a p-value less than 0.05:
+
+* `mm`, `drs`, `dsp`
+* interaction between `mm` & `drs`; `drs` & `dsp`
+
+
+### 3.2.4: Practical Significance
+
+We introduced `DaysUntilBusinessesReopened` and `DaysUntilShelterInPlace` in the second model. We know that the two new variables have an impact on the normalized total cases. However, we also want to study the interaction between the days until mask was mandated with the days when business was shut down and the days when shelter in place was in effect. 
+
+Reviewing the coeftest output, we conclude the following about this model:
+
+* An addition of a day to the mask mandate date will result in a 7.422% decrease in the normalized test cases
+* An addition of a day to reopen businesses date will result in a 20.11% decrease in the normalized test cases
+* An addition of a day to shelter in place order will result in a 20.30% decrease in the normalized test cases
+* An addition of a day to both mask mandate date as well as reopen businesses date will result in a 0.16% increase in the normalized test cases
+* An addition of a day to both mask mandate date as well as shelter in place order will result in a 0.17% increase in the normalized test cases
+* An addition of a day to both reopen businesses date as well as shelter in place order will result in a 0.36% increase in the normalized test cases
+
+We observed high standard errors in comparison to the coefficients. Also, the sign of mask mandate data changed across the two models. Therefore, we conclude this model is not practically significant.
+
+
+## 3.3: Model 3
+
+Through the above listed operationalized variables, let's enhance the regression model further as:
+
+$log(Normalized Total Cases) = \beta_0 + \beta_1 . DaysUntilMaskMandated + \beta_2 . DaysUntilBusinessesReopened + \beta_3 . DaysUntilShelterInPlace + \beta_4 . log(PeopleUnderPovertyLine) + \beta_5 . log(PeopleAtRiskForSeriousIllness) + u$
+
+Before we add these 2 new variables, let's check their correlation
+
+```{r}
+# PeopleUnderPovertyLine
+c4 <- as.numeric(pdp)
+# PeopleAtRiskForSeriousIllness
+c5 <- as.numeric(prs)
+cols <- data.frame(PplUPoverty = c4, PplAtRisk = c5)
+corrMatrix <- cor(cols)
+corrMatrix
+```
+
+As you can see from the above test results these two variables have a very high correlation. We have also observed that `PeopleAtRiskForSeriousIllness` has strong correlation with `X65.` (99.32% correlation) & `All.cause.deaths.2018` (99.26% correlation)
+
+We decided to keep `PeopleAtRiskForSeriousIllness` and to add these other variables instead:
+
+- `Weekly.unemployment.insurance.maximum.amount..dollars.`
+- `CasesInLast7Days`
+
+Before running the model, let's check the correlations again:
+
+```{r}
+l7d <- ds$CasesInLast7Days
+wui <- ds$Weekly.unemployment.insurance.maximum.amount..dollars.
+# PeopleAtRiskForSeriousIllness, CasesInLast7Days
+# Weekly.unemployment.insurance.maximum.amount..dollars.
+cols <- data.frame(PplAtRisk = c5, l7d = l7d, wui = wui)
+corrMatrix <- cor(cols)
+corrMatrix
+```
+
+The correlation of these variables seems good for their inclusion in the second improvement of the model. The model is therefore:
+
+$log(Normalized Total Cases) = \beta_0 + \beta_1 . DaysUntilMaskMandated * \beta_2 . DaysUntilBusinessesReopened * \beta_3 . DaysUntilShelterInPlace + \beta_4 . log(PeopleAtRiskForSeriousIllness) + \beta_5 . Weekly.unemployment.insurance.maximum.amount..dollars. + \beta_6 . CasesInLast7Days + u$
+
+```{r model3, message=FALSE, warning=FALSE}
+model3 <- lm(log(tcd) ~ mm * drs * dsp + log(prs) + wui + l7d)
+
+plot1 <- as.ggplot(~plot(model3, which = 1))
+plot2 <- as.ggplot(~plot(model3, which = 2))
+plot3 <- as.ggplot(~plot(model3, which = 3))
+plot4 <- as.ggplot(~plot(model3, which = 5))
+
+grid.arrange(plot1, plot2, layout_matrix = rbind(c(1,1,2,2),c(1,1,2,2)))
+grid.arrange(plot3, plot4, layout_matrix = rbind(c(1,1,2,2),c(1,1,2,2)))
+
+hist(model3$residuals)
+```
+
+`prs` is the percent people at risk for serious illness due to covid & 2018 population
+`wui` is the weekly unemployment insurance maximum amount dollars
+`l7d` is the CasesInLast7Days
+
+
+### 3.3.1: CLM Assumptions
+
+In this improved Model, there is no change in the assumptions related to Linear in Parameters, Random Sampling, Normality and hence we do not cover them here. Let us examine the other 3 assumptions: 
+
+
+**3. No Perfect Collinearity**
+
+The additional variables involved in the model are: `PeopleAtRiskForSeriousIllness`, `Weekly.unemployment.insurance.maximum.amount..dollars.`, `CasesInLast7Days`, `Death_100k`. Based on our correlation study, there does not exist any perfect collinearity among these variables.
+
+**4. Zero conditional Mean**
+
+From the Residuals Vs Fitted plot, we can see that Zero Conditional Mean assumption is violated. We can infer that the omitted variables potentially influencing this violation. We will now address the omitted variables in the next section.
+
+**5. Homoskedasticity**
+
+Looking at the scale-location plot, the homoskedasticity assumption does not hold. So, we use the Heteroskedasticity-consistent estimation of the covariance matrix of the coefficient estimates in regression models.
+
+### 3.3.2: Regression Table
+
+```{r model3Star}
+# run the coeftest
+coeftest(model3, vcov = vcovHC)
+# get the Heteroskedastic Consistent variance-covariance vector
+se_model <- sqrt(diag(vcovHC(model3))) 
+# stargazer output
+stargazer(model3, type = "text", omit.stat = "f",
+          se = se_model, #Using the robust standard error
+          report=('vc*p'),
+          star.cutoffs = c(0.05, 0.01, 0.001))
+```
+
+### 3.3.3: Statistical Significance
+
+Based on the coeftest results, the following variables are statistically significant with a p-value less than 0.05:
+
+* `mm`, `drs`, `dsp`, `log(prs)`
+* interaction between `mm` & `drs`; `drs` & `dsp`
+
+
+### 3.3.4: Practical Significance
+
+We introduced `prs`, `wui`, and `l7d` in the third model. We introduced variables which are not high collinear with each other into the model. Reviewing the coeftest output, we conclude the following about this model:
+
+* An addition of a day to the mask mandate date will result in a 8.43% decrease in the normalized test cases
+* An addition of a day to reopen businesses date will result in a 23.56% decrease in the normalized test cases
+* An addition of a day to shelter in place order will result in a 18.93% decrease in the normalized test cases
+* An addition of 1% of people at risk for serious illness due to covid will results in a 0.9% of increase in the normalized test cases
+* An addition of a day to both mask mandate date as well as reopen businesses date will result in a 0.17% increase in the normalized test cases
+* An addition of a day to both reopen businesses date as well as shelter in place order will result in a 0.34% increase in the normalized test cases
+
+We observed high standard errors in comparison to the coefficients. The new variables introduced did not impact the practical significance. Therefore, we conclude this model is not practically significant.
+
+
+\newpage
+# Chapter 4: Omitted Variables
+
+We used model 1 to define the omitted variables' impact. To generalize an omitted variable, we can use below definitions:
+            $$log(tcd) = \beta_0 + \beta_1 mm + u$$
+            $$log(tcd) = \beta_0 + \beta_1 mm + \beta_2 OV + u$$
+            $$OV = \alpha_0 + \alpha_1 mm + v$$
+                                                        where OV stands for Omitted Variable
+            $$log(tcd) = \beta_0 + \beta_1 mm + \beta_2 (\alpha_0 + \alpha_1 mm + v) u$$
+            $$log(tcd) = (\beta_0 + \beta_2 . \alpha_0) + (\beta_1 + \beta_2 . \alpha_1) mm + (\beta_2 . v + u)$$
+            
+We are assuming that $\beta_1 > 0$ as mask mandate implementation is delayed. Therefore, normalized test cases will increase.
+
+The OV bias is estimated using $\beta_2 . \alpha_1$. Let's assess bias for the following omitted variables. 
+
+
+* IsMale: There has been a general outcry form certain states in US to not adopt mask wearing. This clearly delayed the mask mandate date in those states. It was predominantly men who had this opinion. Using Gender as an omitted variable, let's assess the coefficients.
+
+  The pushback from men imply mask mandate date is delayed. Therefore, $\alpha_1 > 0$ . We also assume that men are susceptible to the virus than women which imply $\beta_2 > 0$. Therefore, the omitted variable bias in this case is $> 0$ and will result in the over-estimation of $\beta_1$.
+
+
+* Mask Wearing: This is another omitted variable that indicates if mask wearing was prevalent given that mask mandate was implemented. Re-using above set of equations, we can argue that mask wearing will not be adopted if the mask mandate is delayed or not implemented. Therefore, $alpha_1 < 0$. We also assume that wearing mask will reduce the spread of the virus. Therefore, $\beta_2 < 0$. Therefore, the omitted variable bias in this case is $> 0$ and will result in the over-estimation of $\beta_1$.
+
+
+* Number of Test Kits: Test kit availability will have an impact on numner of test cases as well as on the date of mask mandate implementation. Less number of test kits imply less confirmed cases and thereby authorities assuming fewer cases of covid causing a delay in the mask mandate implementation decision. Therefore, $\alpha_1 < 0$. More testing would confirm more cases, i.e., $\beta_2 > 0$. Therefore, the omitted variable bias in this case is $< 0$ and will result in the under-estimation of $\beta_1$.
+
+
+* Emergency Funding: This omitted variable is similar in nature to the Number of Test Kits. More Emergency Funding implies, better infrastructure that can handle covid cases and can potentially cause the delay in the Mask Mandate implementation. Therefore, $\alpha_1 < 0$ and $\beta_2 > 0$. Therefore, the omitted variable bias in this case is $< 0$ and will result in the under-estimation of $\beta_1$.
+
+
+* Access to Information (Internet, TV): This omitted variable is a form of Education. We assume that more the venues through which the people get awareness of the virus, the mask mandate date implementation will be sooner. Therefore, $alpha_1 > 0$. We also assume that access to information will drive the normalized test cases to go down i.e., $\beta_2 < 0$. Therefore, the omitted variable bias in this case is $< 0$ and will result in the under-estimation of $\beta_1$.
+
+
+
+\newpage
+# Chapter 5: Conclusion
+
+
+```{r}
+(se.model1 = sqrt(diag(vcovHC(model1))))
+(se.model2 = sqrt(diag(vcovHC(model2))))
+(se.model3 = sqrt(diag(vcovHC(model3))))
+
+stargazer::stargazer(model1, model2, model3, type = "text", omit.stat = "f",
+                     se = list(se.model1, se.model2, se.model3),
+                     star.cutoffs = c(0.05, 0.01, 0.001),
+                     title = "Three Models Comparison")
+```
+
+
+We set out to answer the research question: "Does wearing a mask help prevent the spread of COVID-19?". We created three models with some statistically significant variables. Through our EDA, we purposefully stayed away from variables such as `Total Death` & `Total Test Results`. These variables could have produced a much better fitting model. However, we would have deviated from the research question to assess the mask mandate impacts on the total test cases. 
+
+
+Model3, which had most of the relevant variables included, had an adjusted $R^2$ of around 50%. Finally, we conclude that we do not have enough information to create a model that explains enough of the variation in our dataset. Therefore, we cannot conclude that wearing a mask help prevent the spread of COVID-19. One potential reason for the unexplained variability is the omitted variables as addressed in the previous chapter. Availability of time-series data that highlights the test cases results before and after mask mandate implementation could have helped improved our final model.
